@@ -10,13 +10,6 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mime/mime.dart';
-import 'package:geolocator/geolocator.dart'; // ADDED FOR LOCATION
-import 'package:geocoding/geocoding.dart'; // ADDED FOR LOCATION
-import 'package:flutter/foundation.dart'; // For kIsWeb
-
-// Add at top of file
-enum MessageStatus { sent, delivered, read }
-enum MessageType { text, image, video, document, pinned, location } // ADDED LOCATION
 
 class Contact {
   final String id;
@@ -108,7 +101,6 @@ class MessageBubble extends StatelessWidget {
   final bool isEdited;
   final bool isPinned;
   final Function()? onPinPressed;
-  final Map<String, dynamic>? locationData; // ADDED LOCATION DATA
 
   const MessageBubble({
     Key? key,
@@ -126,10 +118,9 @@ class MessageBubble extends StatelessWidget {
     required this.chatId,
     this.repliedMessage,
     this.isForwarded = false,
-    this.otherUserName,
+    required this.otherUserName,
     this.otherUserId,
     this.onPinPressed,
-    this.locationData, // ADDED LOCATION DATA
   }) : super(key: key);
 
   bool get isImage => fileType?.startsWith('image/') == true;
@@ -140,7 +131,6 @@ class MessageBubble extends StatelessWidget {
       fileType?.contains('document') == true ||
       fileType?.contains('word') == true ||
       fileType?.contains('text') == true;
-  bool get isLocation => locationData != null; // ADDED LOCATION CHECK
 
   Widget _buildReplyPreview(BuildContext context) {
     if (repliedMessage == null) return const SizedBox.shrink();
@@ -150,7 +140,6 @@ class MessageBubble extends StatelessWidget {
     final isCurrentUserReplied = repliedMessage!['isCurrentUser'] ?? false;
     final repliedFileUrl = repliedMessage!['fileUrl'];
     final repliedFileName = repliedMessage!['fileName'];
-    final repliedLocation = repliedMessage!['location']; // ADDED LOCATION
 
     return Container(
       padding: const EdgeInsets.all(8),
@@ -195,19 +184,12 @@ class MessageBubble extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-          if (repliedLocation != null) // ADDED LOCATION PREVIEW
-            const Text(
-              '📍 Location',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
-            ),
         ],
       ),
     );
   }
-    void _showEditDialog(BuildContext context) {
+
+  void _showEditDialog(BuildContext context) {
     final textEditingController = TextEditingController(text: messageText);
     
     showDialog(
@@ -242,7 +224,7 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-    void _editMessage(String newText) {
+  void _editMessage(String newText) {
     FirebaseFirestore.instance
         .collection('chats')
         .doc(chatId)
@@ -340,76 +322,6 @@ class MessageBubble extends StatelessWidget {
       );
     }
   }
-
-  // ADDED LOCATION PREVIEW WIDGET
-  Widget _buildLocationPreview(BuildContext context) {
-  if (locationData == null) return const SizedBox.shrink();
-
-  final latitude = locationData!['latitude'];
-  final longitude = locationData!['longitude'];
-  final address = locationData!['address'] ?? 'Current Location';
-  final isWeb = locationData!['isWeb'] ?? false;
-
-  return GestureDetector(
-    onTap: () => _openLocationInMaps(context, latitude, longitude),
-    child: Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey[900],
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.location_on, color: Colors.red, size: 32),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '📍 $address',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  isWeb 
-                    ? 'Web Location' 
-                    : 'Lat: ${latitude.toStringAsFixed(4)}, Lng: ${longitude.toStringAsFixed(4)}',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-  // ADDED: OPEN LOCATION IN MAPS
-void _openLocationInMaps(BuildContext context, double lat, double lng) async {
-  final url = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
-  final uri = Uri.parse(url);
-
-  if (await canLaunchUrl(uri)) {
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  } else {
-    // Fallback for web - just show coordinates
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Location: $lat, $lng'),
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-}
 
   String _getFileTypeDescription() {
     if (isVideo) return 'Video';
@@ -594,7 +506,6 @@ void _openLocationInMaps(BuildContext context, double lat, double lng) async {
           fileType: fileType,
           repliedMessage: repliedMessage,
           isForwarded: true,
-          locationData: locationData, // ADDED LOCATION
         ),
       ),
     );
@@ -613,7 +524,6 @@ void _openLocationInMaps(BuildContext context, double lat, double lng) async {
       'fileName': fileName,
       'fileUrl': fileUrl,
       'fileType': fileType,
-      'location': locationData, // ADDED LOCATION
       'timestamp': DateTime.now().toIso8601String(),
     };
 
@@ -670,8 +580,28 @@ void _openLocationInMaps(BuildContext context, double lat, double lng) async {
                 onTap: () => _replyToMessage(context),
               ),
               ListTile(
+                leading: const Icon(Icons.forward, color: Colors.white70),
+                title: const Text('Forward', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _forwardMessage(context);
+                },
+              ),
+              if (messageText.isNotEmpty)
+                ListTile(
+                  leading:
+                      const Icon(Icons.content_copy, color: Colors.white70),
+                  title:
+                      const Text('Copy', style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _copyToClipboard(context);
+                  },
+                ),
+              ListTile(
                 leading: const Icon(Icons.close, color: Colors.white70),
-                title: const Text('Cancel', style: TextStyle(color: Colors.white)),
+                title:
+                    const Text('Cancel', style: TextStyle(color: Colors.white)),
                 onTap: () => Navigator.pop(context),
               ),
             ],
@@ -741,14 +671,22 @@ void _openLocationInMaps(BuildContext context, double lat, double lng) async {
                   _buildFilePreview(context),
                   if (messageText.isNotEmpty) const SizedBox(height: 8),
                 ],
-                if (isLocation) ...[ // ADDED LOCATION PREVIEW
-                  _buildLocationPreview(context),
-                  if (messageText.isNotEmpty) const SizedBox(height: 8),
-                ],
                 if (messageText.isNotEmpty)
                   Text(
                     messageText,
                     style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                if (isEdited)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'edited',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 10,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
                   ),
                 if (formattedTime.isNotEmpty)
                   Padding(
@@ -854,7 +792,6 @@ class ForwardMessageScreen extends StatefulWidget {
   final String? fileType;
   final Map<String, dynamic>? repliedMessage;
   final bool isForwarded;
-  final Map<String, dynamic>? locationData; // ADDED LOCATION
 
   const ForwardMessageScreen({
     Key? key,
@@ -864,7 +801,6 @@ class ForwardMessageScreen extends StatefulWidget {
     this.fileType,
     this.repliedMessage,
     this.isForwarded = false,
-    this.locationData, // ADDED LOCATION
   }) : super(key: key);
 
   @override
@@ -951,7 +887,7 @@ class _ForwardMessageScreenState extends State<ForwardMessageScreen> {
             'createdAt': FieldValue.serverTimestamp(),
             'lastMessage': widget.messageText.isNotEmpty
                 ? widget.messageText
-                : (widget.fileName ?? (widget.locationData != null ? 'Location' : 'Attachment')), // UPDATED
+                : (widget.fileName ?? 'Attachment'),
             'lastMessageTime': FieldValue.serverTimestamp(),
           });
           chatId = newChatRef.id;
@@ -977,10 +913,6 @@ class _ForwardMessageScreenState extends State<ForwardMessageScreen> {
 
         if (widget.repliedMessage != null) {
           messageData['repliedMessage'] = widget.repliedMessage!;
-        }
-
-        if (widget.locationData != null) { // ADDED LOCATION
-          messageData['location'] = widget.locationData!;
         }
 
         await FirebaseFirestore.instance
@@ -1083,7 +1015,8 @@ class ChatInfoScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isGroup = chatInfo?['isGroup'] ?? false;
+    // Fixed error: Properly cast values from Map
+    final isGroup = chatInfo?['isGroup'] as bool? ?? false;
     final users = chatInfo?['users'] as List<dynamic>? ?? [];
     final groupName = chatInfo?['name'] as String? ?? 'Group Chat';
     final groupDescription = chatInfo?['description'] as String? ?? '';
@@ -1103,8 +1036,7 @@ class ChatInfoScreen extends StatelessWidget {
                   CircleAvatar(
                     radius: 50,
                     backgroundColor: Colors.orange[100],
-                    child:
-                        const Icon(Icons.group, size: 50, color: Colors.orange),
+                    child: const Icon(Icons.group, size: 50, color: Colors.orange),
                   ),
                   const SizedBox(height: 16),
                   Text(
@@ -1129,7 +1061,9 @@ class ChatInfoScreen extends StatelessWidget {
                 ],
               ),
             ),
+            
             const SizedBox(height: 24),
+            
             _buildSectionTitle('Media, Links, and Docs'),
             GridView.count(
               shrinkWrap: true,
@@ -1143,7 +1077,9 @@ class ChatInfoScreen extends StatelessWidget {
                 );
               }),
             ),
+            
             const SizedBox(height: 24),
+            
             if (isGroup) ...[
               _buildSectionTitle('Participants (${users.length})'),
               ...List.generate(users.length, (index) {
@@ -1153,9 +1089,8 @@ class ChatInfoScreen extends StatelessWidget {
                       .doc(users[index] as String)
                       .get(),
                   builder: (context, snapshot) {
-                    if (snapshot.hasData) {
-                      final user =
-                          snapshot.data!.data() as Map<String, dynamic>?;
+                    if (snapshot.hasData && snapshot.data!.exists) {
+                      final user = snapshot.data!.data() as Map<String, dynamic>?;
                       return ListTile(
                         leading: const CircleAvatar(),
                         title: Text(user?['name'] as String? ?? 'Unknown'),
@@ -1170,7 +1105,9 @@ class ChatInfoScreen extends StatelessWidget {
                 );
               }),
             ],
+            
             const SizedBox(height: 24),
+            
             _buildSectionTitle('Chat Actions'),
             _buildActionTile(
               icon: Icons.notifications,
@@ -1251,28 +1188,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Map<String, dynamic>? _replyingTo;
   String? _pinnedMessageId;
 
-  void _updateTypingStatus(String typingUserId) async {
-    try {
-      await FirebaseFirestore.instance
-          .collection('chats')
-          .doc(widget.chatId)
-          .update({'typing': typingUserId});
-    } catch (e) {
-      // Optionally handle error
-    }
-  }
-
   void _scrollToMessage(String messageId) {
-    // This is a placeholder implementation.
-    // You may want to implement logic to scroll to the specific message in the list.
-    // For now, it just scrolls to the bottom (latest message).
     _scrollController.animateTo(
       0.0,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
   }
-
 
   void setReplyingTo(Map<String, dynamic>? message) {
     if (mounted) {
@@ -1295,7 +1217,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _fetchOtherUserName();
   }
 
-    Future<void> _loadPinnedMessage() async {
+  Future<void> _loadPinnedMessage() async {
     final doc = await FirebaseFirestore.instance
         .collection('chats')
         .doc(widget.chatId)
@@ -1308,7 +1230,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-    Future<void> _togglePinMessage(String messageId) async {
+  Future<void> _togglePinMessage(String messageId) async {
     try {
       final chatRef = FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
       
@@ -1326,7 +1248,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-    Widget _buildPinnedMessageIndicator() {
+  Widget _buildPinnedMessageIndicator() {
     if (_pinnedMessageId == null) return const SizedBox.shrink();
 
     return FutureBuilder<DocumentSnapshot>(
@@ -1352,7 +1274,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: ListTile(
             leading: const Icon(Icons.push_pin, color: Colors.orange, size: 20),
             title: Text(
-              message['text'] ?? (message['location'] != null ? 'Location' : 'Pinned message'), // UPDATED
+              message['text'] ?? 'Pinned message',
               style: const TextStyle(color: Colors.white),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -1423,242 +1345,80 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // ADDED: SEND LOCATION MESSAGE
-Future<void> _sendLocation() async {
-  try {
-    setState(() => _isUploading = true);
-    
-    // Check if running on web
-    final isWeb = kIsWeb;
-    
-    if (isWeb) {
-      // Web-specific implementation
-      final geolocation = GeolocatorPlatform.instance;
-      
-      // Check if geolocation is supported
-      final isServiceAvailable = await geolocation.isLocationServiceEnabled();
-      if (!isServiceAvailable) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Geolocation is not supported or enabled')),
-        );
-        return;
-      }
-
-      // Request permission (browser will prompt user)
-      final permission = await geolocation.requestPermission();
-      if (permission != LocationPermission.whileInUse && 
-          permission != LocationPermission.always) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permission denied')),
-        );
-        return;
-      }
-
-      // Get current position with timeout
-      Position? position;
-      try {
-        position = await geolocation.getCurrentPosition()
-            .timeout(const Duration(seconds: 10));
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error getting location: ${e.toString()}')),
-        );
-        return;
-      }
-
-      if (position == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not get current position')),
-        );
-        return;
-      }
-
-      // For web, we'll use a simpler address since reverse geocoding isn't as reliable
-      String address = 'Current Location (Lat: ${position.latitude.toStringAsFixed(4)}, Lng: ${position.longitude.toStringAsFixed(4)})';
-
-      // Create location data
-      Map<String, dynamic> locationData = {
-        'latitude': position.latitude,
-        'longitude': position.longitude,
-        'address': address,
-        'timestamp': DateTime.now().toIso8601String(),
-        'isWeb': true,  // Mark as web-originated location
+  void _sendMessage(String currentUserId,
+      {String? fileUrl, String? fileName, String? fileType}) {
+    final messageText = _messageController.text.trim();
+    if (messageText.isNotEmpty || fileUrl != null) {
+      final messageData = {
+        'text': messageText,
+        'senderId': currentUserId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'delivered': false,
+        'read': false,
       };
 
-      // Send message with location
-      _sendMessage(
-        FirebaseAuth.instance.currentUser!.uid,
-        locationData: locationData,
-      );
-    } else {
-      // Original mobile implementation
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location services are disabled')),
-        );
-        return;
+      if (_replyingTo != null) {
+        messageData['repliedMessage'] = {
+          'messageId': _replyingTo!['messageId'],
+          'text': _replyingTo!['text'],
+          'senderId': _replyingTo!['senderId'],
+          'senderName': _replyingTo!['senderName'],
+          'isCurrentUser': _replyingTo!['isCurrentUser'],
+          'fileName': _replyingTo!['fileName'],
+          'fileUrl': _replyingTo!['fileUrl'],
+          'fileType': _replyingTo!['fileType'],
+          'timestamp': _replyingTo!['timestamp'],
+        };
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Location permissions are denied')),
-          );
-          return;
-        }
+      if (fileUrl != null) {
+        messageData['fileUrl'] = fileUrl;
+        messageData['fileName'] = fileName ?? 'File';
+        messageData['fileType'] = fileType ?? 'application/octet-stream';
       }
 
-      if (permission == LocationPermission.deniedForever) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permissions are permanently denied, enable them in app settings')),
-        );
-        return;
-      }
-
-      Position? position;
-      try {
-        position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high
-        ).timeout(const Duration(seconds: 10));
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error getting location: ${e.toString()}')),
-        );
-        return;
-      }
-
-      if (position == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not get current position')),
-        );
-        return;
-      }
-
-      String address = 'Current Location';
-      try {
-        List<Placemark> placemarks = await placemarkFromCoordinates(
-          position.latitude, 
-          position.longitude
-        ).timeout(const Duration(seconds: 5));
-
-        if (placemarks.isNotEmpty) {
-          Placemark place = placemarks[0];
-          address = "${place.street ?? ''}, ${place.locality ?? ''}, ${place.country ?? ''}".replaceAll(RegExp(r'^,\s*|\s*,\s*$'), '');
-        }
-      } catch (e) {
-        print('Error getting address: $e');
-      }
-
-      Map<String, dynamic> locationData = {
-        'latitude': position.latitude,
-        'longitude': position.longitude,
-        'address': address,
-        'timestamp': DateTime.now().toIso8601String(),
-        'isWeb': false,
-      };
-
-      _sendMessage(
-        FirebaseAuth.instance.currentUser!.uid,
-        locationData: locationData,
-      );
-    }
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error getting location: ${e.toString()}')),
-    );
-  } finally {
-    if (mounted) {
-      setState(() => _isUploading = false);
-    }
-  }
-}
-
-// ADDED: SEND MESSAGE METHOD
-Future<void> _sendMessage(
-  String senderId, {
-  String? fileUrl,
-  String? fileName,
-  String? fileType,
-  Map<String, dynamic>? locationData,
-}) async {
-  if (_isUploading) return;
-
-  final text = _messageController.text.trim();
-  if (text.isEmpty && fileUrl == null && locationData == null) {
-    return;
-  }
-
-  setState(() {
-    _isUploading = true;
-  });
-
-  try {
-    final messageData = <String, dynamic>{
-      'senderId': senderId,
-      'timestamp': FieldValue.serverTimestamp(),
-      'delivered': false,
-      'read': false,
-      'isForwarded': false,
-    };
-
-    if (text.isNotEmpty) {
-      messageData['text'] = text;
-    } else {
-      messageData['text'] = '';
-    }
-
-    if (fileUrl != null) {
-      messageData['fileUrl'] = fileUrl;
-      messageData['fileName'] = fileName ?? 'File';
-      messageData['fileType'] = fileType ?? 'application/octet-stream';
-    }
-
-    if (_replyingTo != null) {
-      messageData['repliedMessage'] = _replyingTo;
-    }
-
-    if (locationData != null) {
-      messageData['location'] = locationData;
-    }
-
-    await FirebaseFirestore.instance
-        .collection('chats')
-        .doc(widget.chatId)
-        .collection('messages')
-        .add(messageData);
-
-    // Optionally update lastMessage and lastMessageTime in chat doc
-    await FirebaseFirestore.instance
-        .collection('chats')
-        .doc(widget.chatId)
-        .update({
-      'lastMessage': text.isNotEmpty
-          ? text
-          : (fileName ?? (locationData != null ? 'Location' : 'Attachment')),
-      'lastMessageTime': FieldValue.serverTimestamp(),
-    });
-
-    _messageController.clear();
-    setReplyingTo(null);
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Failed to send message: $e'),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  } finally {
-    if (mounted) {
-      setState(() {
-        _isUploading = false;
+      FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .collection('messages')
+          .add(messageData)
+          .then((_) {
+        FirebaseFirestore.instance
+            .collection('chats')
+            .doc(widget.chatId)
+            .update({
+          'lastMessage':
+              messageText.isNotEmpty ? messageText : (fileName ?? 'Attachment'),
+          'lastMessageTime': FieldValue.serverTimestamp(),
+        });
       });
+
+      _messageController.clear();
+      _updateTypingStatus('');
+      _scrollToBottom();
+
+      if (mounted) {
+        setState(() {
+          _replyingTo = null;
+        });
+      }
     }
   }
-}
+
+  void _scrollToBottom() {
+    _scrollController.animateTo(
+      0.0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _updateTypingStatus(String status) {
+    FirebaseFirestore.instance
+        .collection('chats')
+        .doc(widget.chatId)
+        .update({'typing': status});
+  }
 
   Future<void> _pickAndUploadFile() async {
     try {
@@ -1834,6 +1594,7 @@ Future<void> _sendMessage(
                       : const SizedBox.shrink();
                 },
               ),
+              _buildPinnedMessageIndicator(),
               if (_replyingTo != null)
                 Container(
                   padding:
@@ -1861,14 +1622,6 @@ Future<void> _sendMessage(
                               Text(
                                 _replyingTo!['fileName'] ?? 'Attachment',
                                 style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            if (_replyingTo!['location'] != null) // ADDED LOCATION
-                              const Text(
-                                '📍 Location',
-                                style: TextStyle(
                                   color: Colors.white70,
                                   fontSize: 16,
                                 ),
@@ -1937,6 +1690,7 @@ Future<void> _sendMessage(
                         final message = doc.data() as Map<String, dynamic>;
                         final isCurrentUser =
                             message['senderId'] == currentUser.uid;
+                        final isPinned = doc.id == _pinnedMessageId;
 
                         if (!isCurrentUser) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1956,6 +1710,8 @@ Future<void> _sendMessage(
                           isCurrentUser: isCurrentUser,
                           isDelivered: message['delivered'] ?? false,
                           isRead: message['read'] ?? false,
+                          isEdited: message['edited'] ?? false,
+                          isPinned: isPinned,
                           fileUrl: message['fileUrl'],
                           fileName: message['fileName'],
                           fileType: message['fileType'],
@@ -1965,7 +1721,7 @@ Future<void> _sendMessage(
                           isForwarded: message['isForwarded'] ?? false,
                           otherUserName: _otherUserName,
                           otherUserId: _otherUserId,
-                          locationData: message['location'], // ADDED LOCATION
+                          onPinPressed: () => _togglePinMessage(doc.id),
                         );
                       },
                     );
@@ -1981,12 +1737,6 @@ Future<void> _sendMessage(
                 ),
                 child: Row(
                   children: [
-                    // ADDED LOCATION BUTTON
-                    IconButton(
-                      icon: const Icon(Icons.location_on, color: Colors.white70),
-                      onPressed: _isUploading ? null : _sendLocation,
-                      tooltip: 'Send location',
-                    ),
                     IconButton(
                       icon:
                           const Icon(Icons.attach_file, color: Colors.white70),
