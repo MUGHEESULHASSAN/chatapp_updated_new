@@ -5,9 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'chat_page.dart';
-import 'login_page.dart'; // Make sure to import your LoginPage
+import 'login_page.dart';
 
-// ChatsPage: displays either a list of user search results or the user's existing chats.
 class ChatsPage extends StatefulWidget {
   const ChatsPage({Key? key}) : super(key: key);
 
@@ -34,7 +33,6 @@ class _ChatsPageState extends State<ChatsPage> {
     });
   }
 
-  // Logout functionality
   Future<void> _logout() async {
     try {
       await FirebaseAuth.instance.signOut();
@@ -57,6 +55,27 @@ class _ChatsPageState extends State<ChatsPage> {
     }
   }
 
+  Widget _buildUserAvatar(String? profileUrl, String userName) {
+    if (profileUrl != null && profileUrl.isNotEmpty) {
+      return CircleAvatar(
+        backgroundImage: NetworkImage(profileUrl),
+        backgroundColor: Colors.grey[800],
+        child: profileUrl.isEmpty 
+            ? Text(userName.substring(0, 1).toUpperCase(),
+                style: const TextStyle(color: Colors.white))
+            : null,
+      );
+    } else {
+      return CircleAvatar(
+        backgroundColor: Colors.orange,
+        child: Text(
+          userName.substring(0, 1).toUpperCase(),
+          style: const TextStyle(color: Colors.white),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
@@ -74,7 +93,6 @@ class _ChatsPageState extends State<ChatsPage> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-      
         title: const Text(
           'Chats',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
@@ -99,7 +117,6 @@ class _ChatsPageState extends State<ChatsPage> {
         ),
         child: Column(
           children: [
-            // Search field with debounce
             Padding(
               padding: const EdgeInsets.all(8.0),
               child: TextField(
@@ -119,166 +136,152 @@ class _ChatsPageState extends State<ChatsPage> {
             ),
             Expanded(
               child: searchQuery.isNotEmpty
-              // Show search results based on users collection
                   ? StreamBuilder<QuerySnapshot>(
-                stream: usersRef
-                    .where('name', isGreaterThanOrEqualTo: searchQuery)
-                    .where('name', isLessThanOrEqualTo: searchQuery + '\uf8ff')
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
-                      ),
-                    );
-                  }
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const Center(
-                      child: Text("No users found", style: TextStyle(color: Colors.white70)),
-                    );
-                  }
-                  final users = snapshot.data!.docs;
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: users.length,
-                    itemBuilder: (context, index) {
-                      final user = users[index].data() as Map<String, dynamic>;
-                      final userName = user['name'] ?? 'Unknown User';
-                      final userEmail = user['email'] ?? 'No Email';
-                      final otherUserId = users[index].id;
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 2,
-                        color: Colors.grey[900],
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.orange,
-                            child: Text(
-                              userName.substring(0, 1).toUpperCase(),
-                              style: const TextStyle(color: Colors.white),
+                      stream: usersRef
+                          .where('name', isGreaterThanOrEqualTo: searchQuery)
+                          .where('name', isLessThanOrEqualTo: searchQuery + '\uf8ff')
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
                             ),
-                          ),
-                          title: Text(userName,
-                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                          subtitle: Text(userEmail, style: const TextStyle(color: Colors.white70)),
-                          onTap: () async {
-                            // Check if a chat exists between current user and selected user.
-                            final existingChatQuery = await chatsRef
-                                .where('users', arrayContains: currentUserId)
-                                .get();
-
-                            String? chatId;
-                            for (var chat in existingChatQuery.docs) {
-                              final chatUsers = List<String>.from(chat['users']);
-                              if (chatUsers.contains(otherUserId)) {
-                                chatId = chat.id;
-                                break;
-                              }
-                            }
-                            if (chatId == null) {
-                              // Create new chat if none exists.
-                              final newChatDoc = await chatsRef.add({
-                                'users': [currentUserId, otherUserId],
-                                'createdAt': FieldValue.serverTimestamp(),
-                              });
-                              chatId = newChatDoc.id;
-                            }
-                            if (chatId != null) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatScreen(chatId: chatId!),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      );
-                    },
-                  );
-                },
-              )
-              // Show the user's existing chats.
-                  : StreamBuilder<QuerySnapshot>(
-                stream: chatsRef.where('users', arrayContains: currentUserId).snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
-                      ),
-                    );
-                  }
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const Center(
-                      child: Text("No chats found", style: TextStyle(color: Colors.white70)),
-                    );
-                  }
-                  final chats = snapshot.data!.docs;
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: chats.length,
-                    itemBuilder: (context, index) {
-                      final chat = chats[index].data() as Map<String, dynamic>;
-                      final users = List<String>.from(chat['users']);
-                      final otherUserId = users.firstWhere((id) => id != currentUserId);
-                      final chatId = chats[index].id;
-                      return FutureBuilder<DocumentSnapshot>(
-                        future: usersRef.doc(otherUserId).get(),
-                        builder: (context, userSnapshot) {
-                          if (userSnapshot.connectionState == ConnectionState.waiting) {
-                            return const ListTile(
-                              title: Text('Loading...', style: TextStyle(color: Colors.white)),
-                            );
-                          }
-                          if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
-                            return const ListTile(
-                              title: Text('User not found', style: TextStyle(color: Colors.white)),
-                            );
-                          }
-                          final userData = userSnapshot.data!.data() as Map<String, dynamic>;
-                          final userName = userData['name'] ?? 'Unknown User';
-                          final userEmail = userData['email'] ?? 'No Email';
-                          return Card(
-                            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 2,
-                            color: Colors.grey[900],
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                              leading: CircleAvatar(
-                                backgroundColor: Colors.orange,
-                                child: Text(
-                                  userName.substring(0, 1).toUpperCase(),
-                                  style: const TextStyle(color: Colors.white),
-                                ),
+                          );
+                        }
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return const Center(
+                            child: Text("No users found", style: TextStyle(color: Colors.white70)),
+                          );
+                        }
+                        final users = snapshot.data!.docs;
+                        return ListView.builder(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: users.length,
+                          itemBuilder: (context, index) {
+                            final user = users[index].data() as Map<String, dynamic>;
+                            final userName = user['name'] ?? 'Unknown User';
+                            final userEmail = user['email'] ?? 'No Email';
+                            final profileUrl = user['profile_url'] ?? '';
+                            final otherUserId = users[index].id;
+                            return Card(
+                              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                              title: Text(userName,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                              subtitle: Text(userEmail, style: const TextStyle(color: Colors.white70)),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => ChatScreen(chatId: chatId),
+                              elevation: 2,
+                              color: Colors.grey[900],
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                                leading: _buildUserAvatar(profileUrl, userName),
+                                title: Text(userName,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                                subtitle: Text(userEmail, style: const TextStyle(color: Colors.white70)),
+                                onTap: () async {
+                                  final existingChatQuery = await chatsRef
+                                      .where('users', arrayContains: currentUserId)
+                                      .get();
+
+                                  String? chatId;
+                                  for (var chat in existingChatQuery.docs) {
+                                    final chatUsers = List<String>.from(chat['users']);
+                                    if (chatUsers.contains(otherUserId)) {
+                                      chatId = chat.id;
+                                      break;
+                                    }
+                                  }
+                                  if (chatId == null) {
+                                    final newChatDoc = await chatsRef.add({
+                                      'users': [currentUserId, otherUserId],
+                                      'createdAt': FieldValue.serverTimestamp(),
+                                    });
+                                    chatId = newChatDoc.id;
+                                  }
+                                  if (chatId != null) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ChatScreen(chatId: chatId!),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    )
+                  : StreamBuilder<QuerySnapshot>(
+                      stream: chatsRef.where('users', arrayContains: currentUserId).snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
+                            ),
+                          );
+                        }
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return const Center(
+                            child: Text("No chats found", style: TextStyle(color: Colors.white70)),
+                          );
+                        }
+                        final chats = snapshot.data!.docs;
+                        return ListView.builder(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: chats.length,
+                          itemBuilder: (context, index) {
+                            final chat = chats[index].data() as Map<String, dynamic>;
+                            final users = List<String>.from(chat['users']);
+                            final otherUserId = users.firstWhere((id) => id != currentUserId);
+                            final chatId = chats[index].id;
+                            return FutureBuilder<DocumentSnapshot>(
+                              future: usersRef.doc(otherUserId).get(),
+                              builder: (context, userSnapshot) {
+                                if (userSnapshot.connectionState == ConnectionState.waiting) {
+                                  return const ListTile(
+                                    title: Text('Loading...', style: TextStyle(color: Colors.white)),
+                                  );
+                                }
+                                if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+                                  return const ListTile(
+                                    title: Text('User not found', style: TextStyle(color: Colors.white)),
+                                  );
+                                }
+                                final userData = userSnapshot.data!.data() as Map<String, dynamic>;
+                                final userName = userData['name'] ?? 'Unknown User';
+                                final userEmail = userData['email'] ?? 'No Email';
+                                final profileUrl = userData['profile_url'] ?? '';
+                                return Card(
+                                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  elevation: 2,
+                                  color: Colors.grey[900],
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                                    leading: _buildUserAvatar(profileUrl, userName),
+                                    title: Text(userName,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                                    subtitle: Text(userEmail, style: const TextStyle(color: Colors.white70)),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => ChatScreen(chatId: chatId),
+                                        ),
+                                      );
+                                    },
                                   ),
                                 );
                               },
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  );
-                },
-              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
             ),
           ],
         ),

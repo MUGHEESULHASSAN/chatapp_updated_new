@@ -1,10 +1,370 @@
 import 'dart:ui';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:chat_application/chats_page.dart';
-import 'package:chat_application/login_page.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+
+// Constants
+class AppConstants {
+  static const String cloudName = 'dufgzsmfq';
+  static const String uploadPreset = 'chatapp';
+  static const String apiUrl = 'https://api.cloudinary.com/v1_1/$cloudName/upload';
+}
+
+class AppColors {
+  static const Color primary = Color(0xFF121212);
+  static const Color secondary = Color(0xFF1F1F1F);
+  static const Color accent = Colors.orangeAccent;
+  static const Color cardBackground = Color(0xFF141414);
+}
+
+// Validators
+class Validators {
+  static String? validateEmail(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Please enter your email';
+    }
+    if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value)) {
+      return 'Please enter a valid email';
+    }
+    return null;
+  }
+
+  static String? validatePassword(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Please enter your password';
+    }
+    if (value.trim().length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    return null;
+  }
+
+  static String? validateConfirmPassword(String? value, String password) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Please confirm your password';
+    }
+    if (value.trim() != password.trim()) {
+      return 'Passwords do not match';
+    }
+    return null;
+  }
+
+  static String? validateName(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Please enter your name';
+    }
+    return null;
+  }
+}
+
+// Models
+class UserModel {
+  final String email;
+  final String name;
+  final String? profileUrl;
+
+  UserModel({
+    required this.email,
+    required this.name,
+    this.profileUrl,
+  });
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'createdAt': FieldValue.serverTimestamp(),
+      'email': email,
+      'name': name,
+      'profile_url': profileUrl,
+    };
+  }
+}
+
+// Services
+class ImageUploadService {
+  static Future<String?> uploadToCloudinary(XFile imageFile) async {
+    try {
+      final request = http.MultipartRequest('POST', Uri.parse(AppConstants.apiUrl));
+      request.fields['upload_preset'] = AppConstants.uploadPreset;
+      
+      final fileBytes = await imageFile.readAsBytes();
+      final file = http.MultipartFile.fromBytes(
+        'file',
+        fileBytes,
+        filename: imageFile.name,
+      );
+      request.files.add(file);
+
+      final response = await request.send();
+      final responseData = await response.stream.transform(utf8.decoder).join();
+
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(responseData);
+        return jsonResponse['secure_url'];
+      } else {
+        debugPrint('Cloudinary upload failed: $responseData');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Cloudinary upload error: $e');
+      return null;
+    }
+  }
+}
+
+class AuthService {
+  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  static Future<UserCredential?> signUpWithEmail({
+    required String email,
+    required String password,
+    required String name,
+    String? profileUrl,
+  }) async {
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      if (userCredential.user != null) {
+        final user = UserModel(
+          email: email,
+          name: name,
+          profileUrl: profileUrl,
+        );
+        
+        await _firestore
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set(user.toFirestore());
+      }
+
+      return userCredential;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  static Future<UserCredential?> signInWithGoogle() async {
+    try {
+      final googleSignIn = GoogleSignIn();
+      final googleUser = await googleSignIn.signIn();
+      
+      if (googleUser == null) return null;
+
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      
+      final userCredential = await _auth.signInWithCredential(credential);
+      
+      if (userCredential.user != null) {
+        final userId = userCredential.user!.uid;
+        final userDoc = await _firestore.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
+          final user = UserModel(
+            email: googleUser.email,
+            name: googleUser.displayName ?? 'Google User',
+            profileUrl: googleUser.photoUrl,
+          );
+          
+          await _firestore
+              .collection('users')
+              .doc(userId)
+              .set(user.toFirestore());
+        }
+      }
+      
+      return userCredential;
+    } catch (e) {
+      rethrow;
+    }
+  }
+}
+
+// Custom Widgets
+class CustomTextFormField extends StatelessWidget {
+  final TextEditingController controller;
+  final String labelText;
+  final IconData prefixIcon;
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final String? Function(String?)? validator;
+  final Widget? suffixIcon;
+
+  const CustomTextFormField({
+    Key? key,
+    required this.controller,
+    required this.labelText,
+    required this.prefixIcon,
+    this.obscureText = false,
+    this.keyboardType,
+    this.validator,
+    this.suffixIcon,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      keyboardType: keyboardType,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: labelText,
+        labelStyle: const TextStyle(color: Colors.grey),
+        prefixIcon: Icon(prefixIcon, color: Colors.grey),
+        suffixIcon: suffixIcon,
+        filled: true,
+        fillColor: AppColors.secondary,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      ),
+      validator: validator,
+    );
+  }
+}
+
+class ProfileImagePicker extends StatelessWidget {
+  final XFile? selectedImage;
+  final Uint8List? imageBytes;
+  final VoidCallback onImagePick;
+  final bool isUploading;
+
+  const ProfileImagePicker({
+    Key? key,
+    this.selectedImage,
+    this.imageBytes,
+    required this.onImagePick,
+    this.isUploading = false,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: AppColors.accent.withOpacity(0.5),
+                  width: 2,
+                ),
+              ),
+              child: ClipOval(
+                child: isUploading
+                    ? const CircularProgressIndicator(color: AppColors.accent)
+                    : _buildImageWidget(),
+              ),
+            ),
+            if (!isUploading)
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: GestureDetector(
+                  onTap: onImagePick,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.camera_alt,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Add Profile Photo',
+          style: TextStyle(
+            color: Colors.grey[400],
+            fontSize: 14,
+          ),
+        ),
+        if (isUploading)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Uploading...',
+              style: TextStyle(color: AppColors.accent),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildImageWidget() {
+    if (imageBytes != null) {
+      return Image.memory(imageBytes!, fit: BoxFit.cover);
+    } else {
+      return Icon(
+        Icons.person,
+        size: 60,
+        color: Colors.grey[400],
+      );
+    }
+  }
+}
+
+class LoadingOverlay extends StatelessWidget {
+  final bool isLoading;
+  final Widget child;
+
+  const LoadingOverlay({
+    Key? key,
+    required this.isLoading,
+    required this.child,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        if (isLoading)
+          Container(
+            color: Colors.black45,
+            child: const Center(
+              child: CircularProgressIndicator(color: AppColors.accent),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// Main SignUp Page
 class SignUpPage extends StatefulWidget {
   final VoidCallback? onTap;
 
@@ -16,20 +376,24 @@ class SignUpPage extends StatefulWidget {
 
 class _SignUpPageState extends State<SignUpPage>
     with SingleTickerProviderStateMixin {
-  // Form key and controllers
+  // Form controllers
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  final TextEditingController _emailController    = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
 
-  // Firebase instance
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  // Image picker
+  final ImagePicker _picker = ImagePicker();
 
-  // UI state variables
+  // State variables
   bool _isLoading = false;
   bool _isPasswordVisible = false;
+  bool _isUploadingImage = false;
+  XFile? _selectedImage;
+  Uint8List? _imageBytes;
 
-  // Animation controller for sign-up form animation
+  // Animation controller
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _fadeAnimation;
@@ -38,28 +402,38 @@ class _SignUpPageState extends State<SignUpPage>
   @override
   void initState() {
     super.initState();
+    _initializeAnimations();
+  }
+
+  void _initializeAnimations() {
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
+
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, 0.3),
       end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
-    );
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+
     _fadeAnimation = Tween<double>(
       begin: 0,
       end: 1,
-    ).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeIn),
-    );
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeIn,
+    ));
+
     _scaleAnimation = Tween<double>(
       begin: 0.9,
       end: 1,
-    ).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOutBack),
-    );
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutBack,
+    ));
 
     _animationController.forward();
   }
@@ -70,77 +444,79 @@ class _SignUpPageState extends State<SignUpPage>
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
-  // Email/Password Sign-Up logic
-  Future<void> _signUpWithEmailPassword() async {
-  if (!_formKey.currentState!.validate()) return;
-
-  if (_passwordController.text.trim() != _confirmPasswordController.text.trim()) {
-    _showErrorSnackBar("Passwords don't match!");
-    return;
-  }
-
-  setState(() => _isLoading = true);
-
-  try {
-    // Create user with email and password
-    final userCredential = await _auth.createUserWithEmailAndPassword(
-      email: _emailController.text.trim(),
-      password: _passwordController.text.trim(),
-    );
-    final userId = userCredential.user?.uid;
-
-    if (userId != null) {
-      // Save email to Firestore under "name" field in "users" collection
-      await FirebaseFirestore.instance.collection('users').doc(userId).set({
-        'name': _emailController.text.trim(),
-        'email': _emailController.text.trim(), // Optional: also store email explicitly
-        'createdAt': FieldValue.serverTimestamp(), // Optional: store creation time
-      });
-
-      // Navigate to the personal information page
-      _navigateToPersonalInfoPage(userId);
-    } else {
-      _showErrorSnackBar('User ID is null. Something went wrong.');
+  Future<void> _pickImage() async {
+    try {
+      final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+      if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _selectedImage = pickedFile;
+          _imageBytes = bytes;
+        });
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to pick image: $e');
     }
-  } on FirebaseAuthException catch (e) {
-    _showErrorSnackBar(e.message ?? "An unknown error occurred.");
-  } catch (e) {
-    _showErrorSnackBar('Error: ${e.toString()}');
-  } finally {
-    setState(() => _isLoading = false);
   }
-}
 
-  // Google Sign-In logic
+  Future<void> _signUpWithEmailPassword() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      String? profileUrl;
+      
+      if (_selectedImage != null) {
+        setState(() => _isUploadingImage = true);
+        profileUrl = await ImageUploadService.uploadToCloudinary(_selectedImage!);
+        setState(() => _isUploadingImage = false);
+
+        if (profileUrl == null) {
+          _showErrorSnackBar('Failed to upload profile image. Please try again.');
+          return;
+        }
+      }
+
+      final userCredential = await AuthService.signUpWithEmail(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+        name: _nameController.text.trim(),
+        profileUrl: profileUrl,
+      );
+
+      if (userCredential != null) {
+        _navigateToHomeScreen();
+      }
+    } on FirebaseAuthException catch (e) {
+      _showErrorSnackBar(e.message ?? "Authentication failed");
+    } catch (e) {
+      _showErrorSnackBar('Error: ${e.toString()}');
+    } finally {
+      setState(() {
+        _isLoading = false;
+        _isUploadingImage = false;
+      });
+    }
+  }
+
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
+    
     try {
-      final googleSignIn = GoogleSignIn();
-      final googleUser = await googleSignIn.signIn();
-      if (googleUser == null) {
+      final userCredential = await AuthService.signInWithGoogle();
+      
+      if (userCredential == null) {
         _showErrorSnackBar('Google sign-in was cancelled.');
         return;
       }
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      final userCredential = await _auth.signInWithCredential(credential);
+
       if (userCredential.user != null) {
-        final userId = userCredential.user!.uid;
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .get();
-        if (userDoc.exists) {
-          _navigateToHomeScreen();
-        } else {
-          _navigateToPersonalInfoPage(userId);
-        }
+        _navigateToHomeScreen();
       } else {
         _showErrorSnackBar('Failed to retrieve user data.');
       }
@@ -153,14 +529,6 @@ class _SignUpPageState extends State<SignUpPage>
     }
   }
 
-  // Navigation helpers
-  void _navigateToPersonalInfoPage(String userId) {
-    // Navigator.pushReplacement(
-    //   context,
-    //   MaterialPageRoute(builder: (context) => PersonalInfoPage(userId: userId)),
-    // );
-  }
-
   void _navigateToHomeScreen() {
     Navigator.pushReplacement(
       context,
@@ -168,7 +536,6 @@ class _SignUpPageState extends State<SignUpPage>
     );
   }
 
-  // Error snackbar helper
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -178,66 +545,23 @@ class _SignUpPageState extends State<SignUpPage>
     );
   }
 
-  // Animated lock icon with pulsating effect
-  Widget _buildAnimatedLockIcon() {
-    return Hero(
-      tag: 'lockIcon',
-      child: TweenAnimationBuilder<double>(
-        tween: Tween<double>(begin: 0.6, end: 1.0),
-        duration: const Duration(milliseconds: 700),
-        curve: Curves.easeOutBack,
-        builder: (context, scale, child) {
-          return Transform.scale(scale: scale, child: child);
-        },
-        child: TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 10, end: 20),
-          duration: const Duration(seconds: 2),
-          curve: Curves.easeInOut,
-          builder: (context, glow, child) {
-            return Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.orangeAccent.withOpacity(0.3),
-                    blurRadius: glow,
-                    spreadRadius: glow / 2,
-                  ),
-                ],
-              ),
-              child: Material(
-                shape: const CircleBorder(),
-                elevation: 8,
-                color: const Color(0xFF212121),
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Icon(
-                    Icons.lock_outline,
-                    size: 50,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  // Branding section
   Widget _buildBrandingSection() {
     return Column(
       children: [
-        const SizedBox(height: 60),
-        _buildAnimatedLockIcon(),
+        const SizedBox(height: 30),
+        ProfileImagePicker(
+          selectedImage: _selectedImage,
+          imageBytes: _imageBytes,
+          onImagePick: _pickImage,
+          isUploading: _isUploadingImage,
+        ),
         const SizedBox(height: 20),
         Text(
-          "Get Started",
+          "Create Account",
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-            color: Colors.orangeAccent,
-          ),
+                fontWeight: FontWeight.bold,
+                color: AppColors.accent,
+              ),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 8),
@@ -253,101 +577,71 @@ class _SignUpPageState extends State<SignUpPage>
     );
   }
 
-  // Email field with validation
-  Widget _buildEmailField() {
-    return TextFormField(
-      controller: _emailController,
-      keyboardType: TextInputType.emailAddress,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: 'Email',
-        labelStyle: const TextStyle(color: Colors.grey),
-        prefixIcon: const Icon(Icons.email, color: Colors.grey),
-        filled: true,
-        fillColor: const Color(0xFF1F1F1F),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-      ),
-      validator: (value) {
-        if (value == null || value.trim().isEmpty) {
-          return 'Please enter your email';
-        }
-        if (!RegExp(r'\S+@\S+\.\S+').hasMatch(value)) {
-          return 'Please enter a valid email';
-        }
-        return null;
-      },
-    );
-  }
-
-  // Password field with toggle visibility and validation
-  Widget _buildPasswordField() {
-    return TextFormField(
-      controller: _passwordController,
-      obscureText: !_isPasswordVisible,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: 'Password',
-        labelStyle: const TextStyle(color: Colors.grey),
-        prefixIcon: const Icon(Icons.lock, color: Colors.grey),
-        suffixIcon: IconButton(
-          icon: Icon(
-            _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
-            color: Colors.grey,
+  Widget _buildSignUpForm() {
+    return Form(
+      key: _formKey,
+      child: Column(
+        children: [
+          CustomTextFormField(
+            controller: _nameController,
+            labelText: 'Full Name',
+            prefixIcon: Icons.person,
+            validator: Validators.validateName,
           ),
-          onPressed: () => setState(() => _isPasswordVisible = !_isPasswordVisible),
-        ),
-        filled: true,
-        fillColor: const Color(0xFF1F1F1F),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
+          const SizedBox(height: 15),
+          CustomTextFormField(
+            controller: _emailController,
+            labelText: 'Email',
+            prefixIcon: Icons.email,
+            keyboardType: TextInputType.emailAddress,
+            validator: Validators.validateEmail,
+          ),
+          const SizedBox(height: 15),
+          CustomTextFormField(
+            controller: _passwordController,
+            labelText: 'Password',
+            prefixIcon: Icons.lock,
+            obscureText: !_isPasswordVisible,
+            validator: Validators.validatePassword,
+            suffixIcon: IconButton(
+              icon: Icon(
+                _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                color: Colors.grey,
+              ),
+              onPressed: () => setState(() => _isPasswordVisible = !_isPasswordVisible),
+            ),
+          ),
+          const SizedBox(height: 15),
+          CustomTextFormField(
+            controller: _confirmPasswordController,
+            labelText: 'Confirm Password',
+            prefixIcon: Icons.lock,
+            obscureText: !_isPasswordVisible,
+            validator: (value) => Validators.validateConfirmPassword(
+              value,
+              _passwordController.text,
+            ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: _signUpWithEmailPassword,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.black87,
+              minimumSize: const Size(double.infinity, 50),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text("Sign Up"),
+          ),
+          const SizedBox(height: 20),
+          _buildGoogleButton(),
+        ],
       ),
-      validator: (value) {
-        if (value == null || value.trim().isEmpty) {
-          return 'Please enter your password';
-        }
-        if (value.trim().length < 6) {
-          return 'Password must be at least 6 characters';
-        }
-        return null;
-      },
     );
   }
 
-  // Confirm Password field with validation
-  Widget _buildConfirmPasswordField() {
-    return TextFormField(
-      controller: _confirmPasswordController,
-      obscureText: !_isPasswordVisible,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: 'Confirm Password',
-        labelStyle: const TextStyle(color: Colors.grey),
-        prefixIcon: const Icon(Icons.lock, color: Colors.grey),
-        filled: true,
-        fillColor: const Color(0xFF1F1F1F),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-      ),
-      validator: (value) {
-        if (value == null || value.trim().isEmpty) {
-          return 'Please confirm your password';
-        }
-        if (value.trim() != _passwordController.text.trim()) {
-          return 'Passwords do not match';
-        }
-        return null;
-      },
-    );
-  }
-
-  // Google sign-in button
   Widget _buildGoogleButton() {
     return Material(
       color: Colors.transparent,
@@ -389,7 +683,6 @@ class _SignUpPageState extends State<SignUpPage>
     );
   }
 
-  // Sign-up form card with animation and form fields
   Widget _buildSignUpFormCard() {
     return SlideTransition(
       position: _slideAnimation,
@@ -406,9 +699,9 @@ class _SignUpPageState extends State<SignUpPage>
                 child: Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF141414).withOpacity(0.85),
+                    color: AppColors.cardBackground.withOpacity(0.85),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.orangeAccent, width: 1.5),
+                    border: Border.all(color: AppColors.accent, width: 1.5),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.3),
@@ -417,56 +710,7 @@ class _SignUpPageState extends State<SignUpPage>
                       ),
                     ],
                   ),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      children: [
-                        _buildEmailField(),
-                        const SizedBox(height: 15),
-                        _buildPasswordField(),
-                        const SizedBox(height: 15),
-                        _buildConfirmPasswordField(),
-                        const SizedBox(height: 10),
-                        ElevatedButton(
-                          onPressed: _signUpWithEmailPassword,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orangeAccent.shade200,
-                            foregroundColor: Colors.black87,
-                            minimumSize: const Size(double.infinity, 50),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: const Text("Sign Up"),
-                        ),
-                        const SizedBox(height: 20),
-                        // Divider with "Or"
-                        const SizedBox(height: 20),
-                        // Login link prompt
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              "Already have an account? ",
-                              style: TextStyle(color: Colors.grey.shade500),
-                            ),
-                            GestureDetector(
-                              onTap: (){
-                                Navigator.push(context, MaterialPageRoute(builder: (context)=>LoginPage()));
-                              },
-                              child: const Text(
-                                "Login now",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  child: _buildSignUpForm(),
                 ),
               ),
             ),
@@ -476,42 +720,37 @@ class _SignUpPageState extends State<SignUpPage>
     );
   }
 
-  // Main build method
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      body: Stack(
-        children: [
-          const AnimatedBackground(),
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              physics: const BouncingScrollPhysics(),
-              child: Column(
-                children: [
-                  _buildBrandingSection(),
-                  const SizedBox(height: 40),
-                  _buildSignUpFormCard(),
-                  const SizedBox(height: 20),
-                ],
+      backgroundColor: AppColors.primary,
+      body: LoadingOverlay(
+        isLoading: _isLoading,
+        child: Stack(
+          children: [
+            const AnimatedBackground(),
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                physics: const BouncingScrollPhysics(),
+                child: Column(
+                  children: [
+                    _buildBrandingSection(),
+                    const SizedBox(height: 40),
+                    _buildSignUpFormCard(),
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (_isLoading)
-            Container(
-              color: Colors.black45,
-              child: const Center(
-                child: CircularProgressIndicator(color: Colors.orange),
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-// Animated background widget similar to the one used in LoginPage.
+// Animated Background
 class AnimatedBackground extends StatefulWidget {
   const AnimatedBackground({Key? key}) : super(key: key);
 
@@ -555,7 +794,7 @@ class _AnimatedBackgroundState extends State<AnimatedBackground>
         return Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF121212), Color(0xFF1C1C1C)],
+              colors: [AppColors.primary, Color(0xFF1C1C1C)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
@@ -586,7 +825,7 @@ class _BackgroundPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()..color = Colors.orangeAccent.withOpacity(0.1);
+    final Paint paint = Paint()..color = AppColors.accent.withOpacity(0.1);
     for (var circle in circles) {
       final dx = circle.offset.dx + 0.05 * (animationValue - 0.5);
       final dy = circle.offset.dy + 0.05 * (0.5 - animationValue);

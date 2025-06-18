@@ -1013,13 +1013,47 @@ class ChatInfoScreen extends StatelessWidget {
     this.chatInfo,
   }) : super(key: key);
 
+  // Helper method to build user avatar with profile image
+  Widget _buildUserAvatar(String? profileUrl, {bool isGroup = false, double radius = 50}) {
+    if (isGroup) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.orange[100],
+        child: const Icon(Icons.group, size: 50, color: Colors.orange),
+      );
+    }
+    
+    if (profileUrl != null && profileUrl.isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: NetworkImage(profileUrl),
+        backgroundColor: Colors.grey[300],
+      );
+    } else {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.orange,
+        child: const Icon(Icons.person, color: Colors.white),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Fixed error: Properly cast values from Map
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
     final isGroup = chatInfo?['isGroup'] as bool? ?? false;
     final users = chatInfo?['users'] as List<dynamic>? ?? [];
     final groupName = chatInfo?['name'] as String? ?? 'Group Chat';
     final groupDescription = chatInfo?['description'] as String? ?? '';
+
+    // For 1:1 chat, find the other user's ID
+    String? otherUserId;
+    if (!isGroup && currentUserId != null && users.length == 2) {
+      otherUserId = users.firstWhere(
+        (id) => id != currentUserId,
+        orElse: () => users.isNotEmpty ? users[0] : '',
+      ) as String?;
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -1033,19 +1067,67 @@ class ChatInfoScreen extends StatelessWidget {
             Center(
               child: Column(
                 children: [
-                  CircleAvatar(
-                    radius: 50,
-                    backgroundColor: Colors.orange[100],
-                    child: const Icon(Icons.group, size: 50, color: Colors.orange),
-                  ),
+                  // Display group avatar or user avatar
+                  if (isGroup)
+                    _buildUserAvatar(null, isGroup: true)
+                  else if (otherUserId != null)
+                    FutureBuilder<DocumentSnapshot>(
+                      future: FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(otherUserId)
+                          .get(),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData && snapshot.data!.exists) {
+                          final user = snapshot.data!.data() as Map<String, dynamic>;
+                          final profileUrl = user['profile_url'] as String? ?? '';
+                          return _buildUserAvatar(profileUrl);
+                        }
+                        return _buildUserAvatar(null);
+                      },
+                    )
+                  else
+                    _buildUserAvatar(null),
+                  
                   const SizedBox(height: 16),
-                  Text(
-                    isGroup ? groupName : 'User Name',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                  
+                  // Display name
+                  if (isGroup)
+                    Text(
+                      groupName,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  else if (otherUserId != null)
+                    FutureBuilder<DocumentSnapshot>(
+                      future: FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(otherUserId)
+                          .get(),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData && snapshot.data!.exists) {
+                          final user = snapshot.data!.data() as Map<String, dynamic>;
+                          final userName = user['name'] as String? ?? 'Unknown User';
+                          return Text(
+                            userName,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          );
+                        }
+                        return const Text(
+                          'User',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        );
+                      },
                     ),
-                  ),
+                  
+                  // Group description
                   if (isGroup && groupDescription.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -1091,10 +1173,14 @@ class ChatInfoScreen extends StatelessWidget {
                   builder: (context, snapshot) {
                     if (snapshot.hasData && snapshot.data!.exists) {
                       final user = snapshot.data!.data() as Map<String, dynamic>?;
+                      final profileUrl = user?['profile_url'] as String? ?? '';
+                      final userName = user?['name'] as String? ?? 'Unknown';
+                      final userEmail = user?['email'] as String? ?? '';
+                      
                       return ListTile(
-                        leading: const CircleAvatar(),
-                        title: Text(user?['name'] as String? ?? 'Unknown'),
-                        subtitle: Text(user?['email'] as String? ?? ''),
+                        leading: _buildUserAvatar(profileUrl, radius: 24),
+                        title: Text(userName),
+                        subtitle: Text(userEmail),
                       );
                     }
                     return const ListTile(
@@ -1164,6 +1250,34 @@ class ChatInfoScreen extends StatelessWidget {
     );
   }
 }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.grey[600],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionTile({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(title, style: TextStyle(color: color)),
+      onTap: onTap,
+    );
+  }
+
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
